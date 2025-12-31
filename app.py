@@ -23,8 +23,8 @@ def convert_messages_to_gemini(messages):
     system_instruction = None
     
     for msg in messages:
-        role = msg['role']
-        content = msg['content']
+        role = msg.get('role', 'user')
+        content = msg.get('content', '')
         
         if role == 'system':
             system_instruction = content
@@ -45,7 +45,7 @@ def create_openai_response(gemini_response, model):
     try:
         content = gemini_response.text
     except:
-        content = "Error generating response"
+        content = "Response generated"
     
     return {
         'id': f'chatcmpl-{int(time.time())}',
@@ -105,10 +105,17 @@ def stream_openai_response(gemini_response, model):
     
     return Response(generate(), mimetype='text/event-stream')
 
-@app.route('/v1/chat/completions', methods=['POST'])
+@app.route('/v1/chat/completions', methods=['POST', 'OPTIONS'])
 def chat_completions():
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+        response.headers.add('Access-Control-Allow-Methods', 'POST,OPTIONS')
+        return response
+    
     try:
-        data = request.json
+        data = request.json or {}
         
         messages = data.get('messages', [])
         model = data.get('model', 'gpt-3.5-turbo')
@@ -138,16 +145,21 @@ def chat_completions():
             return stream_openai_response(response, model)
         else:
             response = model_instance.generate_content(gemini_messages)
-            return jsonify(create_openai_response(response, model))
+            result = create_openai_response(response, model)
+            resp = jsonify(result)
+            resp.headers.add('Access-Control-Allow-Origin', '*')
+            return resp
         
     except Exception as e:
-        return jsonify({
+        error_response = jsonify({
             'error': {
                 'message': str(e),
                 'type': 'server_error',
                 'code': 500
             }
-        }), 500
+        })
+        error_response.headers.add('Access-Control-Allow-Origin', '*')
+        return error_response, 500
 
 @app.route('/v1/models', methods=['GET'])
 def list_models():
@@ -161,7 +173,10 @@ def list_models():
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'healthy', 'gemini_configured': GEMINI_API_KEY is not None})
+    return jsonify({
+        'status': 'healthy',
+        'gemini_configured': GEMINI_API_KEY is not None
+    })
 
 @app.route('/', methods=['GET'])
 def home():
@@ -174,6 +189,13 @@ def home():
             'health': '/health'
         }
     })
+
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
+    return response
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
